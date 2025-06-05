@@ -465,21 +465,19 @@ static void srv_routine_control_check_memory (uint8_t *data, uint16_t size)
     c_printf ("check memory: addr = 0x%08X, len = %08X, crc = 0x%08X\n", mem_addr, mem_size, crc);
 
     uint32_t calc_crc = 0xFFFFFFFF;
-    if (g_fw_fp)
+    FILE *fp = fopen("out.dat", "rb");
+    if (!fp)
     {
-        fflush(g_fw_fp);
-        FILE *fp = fopen("out.dat", "rb");
-        if (fp)
-        {
-            uint8_t tmp[1024];
-            size_t r;
-            while ((r = fread(tmp, 1, sizeof(tmp), fp)) > 0)
-            {
-                calc_crc = make_crc32(calc_crc, tmp, (uint32_t)r);
-            }
-            fclose(fp);
-        }
+        send_negative_response(ERROR_GENERAL_PROGRAMMING_FAILURE);
+        return;
     }
+    uint8_t tmp[1024];
+    size_t r;
+    while ((r = fread(tmp, 1, sizeof(tmp), fp)) > 0)
+    {
+        calc_crc = make_crc32(calc_crc, tmp, (uint32_t)r);
+    }
+    fclose(fp);
     msg[0] = 0x71;
     msg[1] = 0x01;
     msg[2] = 0x02;
@@ -698,14 +696,12 @@ static int check_session (uint8_t *data, uint16_t size)
         case SRV_REQ_TRANSFER_EXIT:
             if (s_uds.session == SESSION_DEFAULT)
             {
-c_printf ("%s, %d\n", __FILE__, __LINE__);
                 send_negative_response(ERROR_SERVICE_NOT_SUPPORTED_IN_ACTIVE_SESSION);
                 return 1;
             }
             break;
 
         default:
-c_printf ("%s, %d\n", __FILE__, __LINE__);
             send_negative_response(ERROR_SERVICE_NOT_SUPPORTED);
             return 1;
     }
@@ -722,7 +718,6 @@ static int check_security (uint8_t *data, uint16_t size)
         case SRV_REQ_TRANSFER_EXIT:
             if (s_uds.secure == 0)
             {
-c_printf ("%s, %d\n", __FILE__, __LINE__);
                 send_negative_response(ERROR_SECURITY_ACCESS_DENIED);
                 return 1;
             }

@@ -286,7 +286,7 @@ static void ecu_reset (uint8_t reset_type)
 {
     uint8_t cmd[2];
 
-    cmd[0] = SRV_ROUTINE_CONTROL;
+    cmd[0] = SRV_ECU_RESET;
     cmd[1] = reset_type;
     INT_tp_send (cmd, sizeof(cmd));
 }
@@ -508,6 +508,8 @@ void fw_update_schedule (void)
             break;
         case 45:
             printf ("done\n");
+            free(s_fw.buf);
+            s_fw.buf = NULL;
             s_fw.done = 1;
             s_fw.state = 0;
             break;
