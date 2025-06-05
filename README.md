@@ -1,12 +1,16 @@
 # uds_fw_update
-- 이 프로젝트는 ISO 14229 UDS를 이용한 firmware update입니다.
-- uds client와 uds server로 나누어져있고 uds client가 uds server의 firmware를 update합니다.
-- 이 프로젝트의 목적은 uds를 이용한 firmware update구현이기 때문에 uds의 하위 계층인 ISO 15765-2 ISO-TP는 uds client와 server를 연결하는 간단한 mock function으로 구현되어있습니다.
 
-build (linux):
-    make clean
-    make
+이 프로젝트는 ISO 14229 UDS 프로토콜을 이용해 ECU 펌웨어 업데이트 과정을 테스트하기 위한 예제입니다. 클라이언트와 서버가 하나의 바이너리에서 동작하며, ISO-TP 계층은 단순 모의 함수로 구현되어 있습니다.
 
-test:
-    ./uds_fw_update
-	
+## 빌드 방법 (Linux)
+```bash
+make -C src clean
+make -C src
+```
+
+## 실행 방법
+소스 루트에서 다음 명령을 실행합니다. 테스트 이미지는 `src/test.dat`을 사용합니다.
+```bash
+./src/uds_fw_update
+```
+
