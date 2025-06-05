@@ -68,6 +68,7 @@ typedef struct {
 } uds_info_t;
 
 static uds_info_t s_uds;
+static FILE *outFile = NULL; // Added for firmware data saving
 
 void c_printf (const char *format, ...);
 
@@ -151,7 +152,7 @@ static void session_timeout_check (void)
     {
         if(s_uds.tm_session < uds_get_ms())
         {
-            //c_printf ("session timeout %ums\n", uds_get_ms() - s_uds.tm_session);
+            c_printf ("session timeout %ums\n", uds_get_ms() - s_uds.tm_session); // Uncommented log
             s_uds.session = SESSION_DEFAULT;
             s_uds.security_seed_x = gen_random();
             s_uds.security_seed_y = gen_random();
@@ -543,11 +544,49 @@ static void srv_transfer_data (uint8_t *data, uint16_t size)
         send_negative_response(ERROR_INCORRECT_MESSAGE_LENGTH_OR_INVALID_FORMAT);
         return;
     }
-    if (s_uds.blk_cnt != seq)
+
+    if (seq == 1)
     {
+        if (outFile != NULL)
+        {
+            fclose(outFile); // Close if already open (e.g., interrupted transfer)
+            outFile = NULL;
+        }
+        outFile = fopen("out.dat", "wb");
+        if (outFile == NULL)
+        {
+            // perror is not available, use c_printf
+            c_printf("SERVER: Error opening out.dat for writing.\n");
+            send_negative_response(0x72); // General Programming Failure
+            return;
+        }
+    }
+    else if (outFile == NULL)
+    {
+        // This means we missed the first block or an error occurred after opening
+        c_printf("SERVER: outFile is NULL for seq > 1.\n");
         send_negative_response(ERROR_REQUEST_SEQUENCE);
         return;
     }
+
+    if (s_uds.blk_cnt != seq)
+    {
+        c_printf("SERVER: Sequence error. Expected: %u, Got: %u.\n", s_uds.blk_cnt, seq);
+        send_negative_response(ERROR_REQUEST_SEQUENCE);
+        // Do not close outFile here, as a new transfer might start
+        return;
+    }
+
+    if (fwrite(p, 1, size - 2, outFile) != (size_t)(size - 2))
+    {
+        c_printf("SERVER: Error writing to outFile.\n");
+        fclose(outFile);
+        outFile = NULL;
+        send_negative_response(0x72); // General Programming Failure
+        return;
+    }
+    fflush(outFile); // Ensure data is written to disk
+
     s_uds.blk_cnt++;
     c_printf ("transfer data: seq = %u, data[] = %02X %02X ..., len = %u\n", seq, p[0], p[1], size - 2);
     send_positive_response(NULL, 0);
@@ -555,15 +594,21 @@ static void srv_transfer_data (uint8_t *data, uint16_t size)
 
 static void srv_req_transfer_exit (uint8_t *data, uint16_t size)
 {
-    uint8_t res = 0x37;
-
-    s_uds.sub_func = data[1];
+    // s_uds.sub_func = data[1]; // No sub-function for RequestTransferExit, and data[1] is out of bounds if size is 1.
+                                // For this service, sub_func is often ignored or considered 0.
     if (size != 1)
     {
         send_negative_response(ERROR_INCORRECT_MESSAGE_LENGTH_OR_INVALID_FORMAT);
         return;
     }
-    uds_tp_send(&res, 1);
+
+    if (outFile != NULL)
+    {
+        fclose(outFile);
+        outFile = NULL;
+    }
+
+    send_positive_response(NULL, 0); // Send positive response (SID + 0x40)
 }
 
 /*
