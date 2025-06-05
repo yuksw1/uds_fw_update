@@ -96,7 +96,7 @@ static void uds_parse_client (uint8_t *data, uint16_t size)
     uint16_t P2, P2_;
     uint32_t seed_x, seed_y;
 
-    if (size < 2)
+    if (size < 1)
     {
         printf ("client: invalid response len: %u\n", size);
         return;
@@ -334,6 +334,7 @@ void fw_update_start (char *file)
                 s_fw.len = len;
                 s_fw.send_len = 0;
                 s_fw.state = 10;
+                s_fw.blk_cnt = 1;
                 s_fw.crc = make_crc32(0xFFFFFFFF, s_fw.buf, len);
                 s_fw.done = 0;
             }
