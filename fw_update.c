@@ -96,7 +96,7 @@ static void uds_parse_client (uint8_t *data, uint16_t size)
     uint16_t P2, P2_;
     uint32_t seed_x, seed_y;
 
-    if (size < 1)
+    if (size < 2)
     {
         printf ("client: invalid response len: %u\n", size);
         return;
@@ -286,7 +286,7 @@ static void ecu_reset (uint8_t reset_type)
 {
     uint8_t cmd[2];
 
-    cmd[0] = SRV_ECU_RESET;
+    cmd[0] = SRV_ROUTINE_CONTROL;
     cmd[1] = reset_type;
     INT_tp_send (cmd, sizeof(cmd));
 }
@@ -334,7 +334,6 @@ void fw_update_start (char *file)
                 s_fw.len = len;
                 s_fw.send_len = 0;
                 s_fw.state = 10;
-                s_fw.blk_cnt = 1;
                 s_fw.crc = make_crc32(0xFFFFFFFF, s_fw.buf, len);
                 s_fw.done = 0;
             }
@@ -508,8 +507,6 @@ void fw_update_schedule (void)
             break;
         case 45:
             printf ("done\n");
-            free(s_fw.buf);
-            s_fw.buf = NULL;
             s_fw.done = 1;
             s_fw.state = 0;
             break;

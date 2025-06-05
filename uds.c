@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include "uds.h"
-#include "util.h"
 
 #define SESSION_TIMEOUT             5000
 #define SECURITY_ACCESS_DELAY_TIME  10000
@@ -47,8 +46,6 @@
 #define ERROR_SECURITY_ACCESS_DENIED                        0x33
 #define ERROR_INCORRECT_KEY                                 0x35
 #define ERROR_REQUIRED_TIME_DELAY_NOT_EXPIRED               0x37
-#define ERROR_EXCEEDED_NUMBER_OF_ATTEMPTS                   0x36
-#define ERROR_GENERAL_PROGRAMMING_FAILURE                   0x72
 #define ERROR_REQUEST_CORRECTLY_RECEIVED_RESPONSE_PENDING   0x78
 #define ERROR_SERVICE_NOT_SUPPORTED_IN_ACTIVE_SESSION       0x7F
 
@@ -66,20 +63,27 @@ typedef struct {
     uint32_t security_seed_x;
     uint32_t security_seed_y;
     uint32_t security_key;
-    uint8_t  security_attempts;
     uint32_t tm_session;
     uint32_t tm_security_delay;
 } uds_info_t;
 
 static uds_info_t s_uds;
 
-FILE *g_fw_fp = NULL;
-uint32_t g_fw_expected_size = 0;
-uint32_t g_fw_received_size = 0;
-
 void c_printf (const char *format, ...);
 
+static uint16_t get_u16(void *p)
+{
+    uint8_t *b = p;
 
+    return (uint16_t)(((uint16_t)b[0] << 8) | (uint16_t)b[1]);
+}
+
+static uint32_t get_u32(void *p)
+{
+    uint8_t *b = p;
+
+    return (uint32_t)(((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) | ((uint32_t)b[2] << 8) | (uint32_t)b[3]);
+}
 
 static uint32_t gen_random(void)
 {
@@ -152,8 +156,6 @@ static void session_timeout_check (void)
             s_uds.security_seed_x = gen_random();
             s_uds.security_seed_y = gen_random();
             s_uds.security_key = 0;
-            s_uds.secure = 0;
-            s_uds.security_attempts = 0;
         }
         else s_uds.tm_session = uds_get_ms() + SESSION_TIMEOUT;
     }
@@ -312,24 +314,14 @@ static void srv_security_access (uint8_t *data, uint16_t size)
                 c_printf ("SECURITY_ACCESS, key = 0x%08X, 0x%08X\n", requested_key, s_uds.security_key);
                 if(requested_key != s_uds.security_key)
                 {
-                    s_uds.security_attempts++;
                     s_uds.tm_security_delay = uds_get_ms() + SECURITY_ACCESS_DELAY_TIME;
                     s_uds.security_seed_x = gen_random();
                     s_uds.security_seed_y = gen_random();
                     s_uds.security_key = 0;
-                    if (s_uds.security_attempts >= 3)
-                    {
-                        s_uds.security_attempts = 0;
-                        send_negative_response(ERROR_EXCEEDED_NUMBER_OF_ATTEMPTS);
-                    }
-                    else
-                    {
-                        send_negative_response(ERROR_INCORRECT_KEY);
-                    }
+                    send_negative_response(ERROR_INCORRECT_KEY);
                     break;
                 }
                 s_uds.secure = 1;
-                s_uds.security_attempts = 0;
                 s_uds.security_seed_x = 0;
                 s_uds.security_seed_y = 0;
                 send_positive_response(NULL, 0);
@@ -409,9 +401,6 @@ static void srv_routine_control_erase_memory (uint8_t *data, uint16_t size)
 {
     uint8_t msg[3];
     uint32_t file_start_addr, file_size;
-    extern FILE *g_fw_fp;
-    extern uint32_t g_fw_expected_size;
-    extern uint32_t g_fw_received_size;
 
     s_uds.sub_func = data[1];
     if ((size != 13) || (data[4] != 0x44))
@@ -422,15 +411,6 @@ static void srv_routine_control_erase_memory (uint8_t *data, uint16_t size)
     file_start_addr = get_u32(&data[5]);
     file_size       = get_u32(&data[9]);
     c_printf ("file_start_addr = 0x%08X, file_size = 0x%08X\n", file_start_addr, file_size);
-
-    if (g_fw_fp)
-    {
-        fclose(g_fw_fp);
-        g_fw_fp = NULL;
-    }
-    g_fw_fp = fopen("out.dat", "wb");
-    g_fw_expected_size = file_size;
-    g_fw_received_size = 0;
     msg[0] = data[2];
     msg[1] = data[3];
     msg[2] = 0; // 0=success, 1=error
@@ -443,8 +423,6 @@ static void srv_routine_control_check_memory (uint8_t *data, uint16_t size)
     uint8_t msg[8];
     uint32_t mem_addr, mem_size, crc;
     uint16_t crc_len;
-    extern uint32_t make_crc32(uint32_t crc, const void *buf, uint32_t len);
-    extern FILE *g_fw_fp;
 
     s_uds.sub_func = data[1];
     if (size != 18)
@@ -464,35 +442,15 @@ static void srv_routine_control_check_memory (uint8_t *data, uint16_t size)
     crc = get_u32(&data[14]);
     c_printf ("check memory: addr = 0x%08X, len = %08X, crc = 0x%08X\n", mem_addr, mem_size, crc);
 
-    uint32_t calc_crc = 0xFFFFFFFF;
-    FILE *fp = fopen("out.dat", "rb");
-    if (!fp)
-    {
-        send_negative_response(ERROR_GENERAL_PROGRAMMING_FAILURE);
-        return;
-    }
-    uint8_t tmp[1024];
-    size_t r;
-    while ((r = fread(tmp, 1, sizeof(tmp), fp)) > 0)
-    {
-        calc_crc = make_crc32(calc_crc, tmp, (uint32_t)r);
-    }
-    fclose(fp);
     msg[0] = 0x71;
     msg[1] = 0x01;
     msg[2] = 0x02;
     msg[3] = 0x00;
-    if (calc_crc == crc)
-    {
-        msg[4] = 0x00;
-    }
-    else
-    {
-        msg[4] = 0x01;
-    }
-    msg[5] = 0x00;
-    msg[6] = 0x00;
-    msg[7] = 0x00;
+
+    msg[4] = 0x00; // 0=success, 1 = error
+    msg[5] = 0x00; // 0=success, 1 = error
+    msg[6] = 0x00; // 0=success, 1 = error
+    msg[7] = 0x00; // 0=success, 1 = error
     uds_tp_send(msg, 8);
 }
 
@@ -506,7 +464,6 @@ static void srv_routine_control_check_programming_dependency (uint8_t *data, uin
         send_negative_response(ERROR_INCORRECT_MESSAGE_LENGTH_OR_INVALID_FORMAT);
         return;
     }
-    c_printf("CheckProgrammingDependency\n");
     msg[0] = 0x71;
     msg[1] = 0x01;
     msg[2] = 0xFF;
@@ -554,9 +511,6 @@ static void srv_request_download (uint8_t *data, uint16_t size)
     uint8_t msg[4];
     uint32_t file_start_addr, file_size;
     uint8_t max_num_of_block_len = 2;
-    extern FILE *g_fw_fp;
-    extern uint32_t g_fw_expected_size;
-    extern uint32_t g_fw_received_size;
 
     s_uds.sub_func = data[1];
     if ((size != 11) || (data[1] != 0) || (data[2] != 0x44))
@@ -568,12 +522,6 @@ static void srv_request_download (uint8_t *data, uint16_t size)
     file_size       = get_u32(&data[7]);
     s_uds.blk_cnt = 1;
     c_printf ("request download, file_start_addr = 0x%08X, file_size = 0x%08X\n", file_start_addr, file_size);
-    if (!g_fw_fp)
-    {
-        g_fw_fp = fopen("out.dat", "wb");
-    }
-    g_fw_expected_size = file_size;
-    g_fw_received_size = 0;
 
     /***********************************************/
     msg[0] = s_uds.service + 0x40;
@@ -589,8 +537,6 @@ static void srv_transfer_data (uint8_t *data, uint16_t size)
 {
     uint8_t seq = data[1];
     uint8_t *p = &data[2];
-    extern FILE *g_fw_fp;
-    extern uint32_t g_fw_received_size;
 
     if (size < 3)
     {
@@ -604,39 +550,19 @@ static void srv_transfer_data (uint8_t *data, uint16_t size)
     }
     s_uds.blk_cnt++;
     c_printf ("transfer data: seq = %u, data[] = %02X %02X ..., len = %u\n", seq, p[0], p[1], size - 2);
-
-    if (g_fw_fp)
-    {
-        fwrite(p, 1, size - 2, g_fw_fp);
-        g_fw_received_size += size - 2;
-    }
-    s_uds.sub_func = seq;
     send_positive_response(NULL, 0);
 }
 
 static void srv_req_transfer_exit (uint8_t *data, uint16_t size)
 {
-    extern FILE *g_fw_fp;
-    extern uint32_t g_fw_expected_size;
-    extern uint32_t g_fw_received_size;
+    uint8_t res = 0x37;
 
-    s_uds.sub_func = 0;
+    s_uds.sub_func = data[1];
     if (size != 1)
     {
         send_negative_response(ERROR_INCORRECT_MESSAGE_LENGTH_OR_INVALID_FORMAT);
         return;
     }
-    if (g_fw_fp)
-    {
-        fclose(g_fw_fp);
-        g_fw_fp = NULL;
-    }
-    if (g_fw_expected_size != g_fw_received_size)
-    {
-        send_negative_response(ERROR_GENERAL_PROGRAMMING_FAILURE);
-        return;
-    }
-    uint8_t res = 0x77;
     uds_tp_send(&res, 1);
 }
 
@@ -696,12 +622,14 @@ static int check_session (uint8_t *data, uint16_t size)
         case SRV_REQ_TRANSFER_EXIT:
             if (s_uds.session == SESSION_DEFAULT)
             {
+c_printf ("%s, %d\n", __FILE__, __LINE__);
                 send_negative_response(ERROR_SERVICE_NOT_SUPPORTED_IN_ACTIVE_SESSION);
                 return 1;
             }
             break;
 
         default:
+c_printf ("%s, %d\n", __FILE__, __LINE__);
             send_negative_response(ERROR_SERVICE_NOT_SUPPORTED);
             return 1;
     }
@@ -718,6 +646,7 @@ static int check_security (uint8_t *data, uint16_t size)
         case SRV_REQ_TRANSFER_EXIT:
             if (s_uds.secure == 0)
             {
+c_printf ("%s, %d\n", __FILE__, __LINE__);
                 send_negative_response(ERROR_SECURITY_ACCESS_DENIED);
                 return 1;
             }
@@ -816,15 +745,4 @@ void uds_poll (void)
 void uds_init (void)
 {
     uds_hal_init();
-    s_uds.secure = 0;
-    s_uds.session = SESSION_DEFAULT;
-    s_uds.service = 0;
-    s_uds.sub_func = 0;
-    s_uds.blk_cnt = 0;
-    s_uds.security_seed_x = gen_random();
-    s_uds.security_seed_y = gen_random();
-    s_uds.security_key = 0;
-    s_uds.security_attempts = 0;
-    s_uds.tm_session = uds_get_ms() + SESSION_TIMEOUT;
-    s_uds.tm_security_delay = 0;
 }

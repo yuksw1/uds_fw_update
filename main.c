@@ -6,7 +6,7 @@
 int main (void)
 {
     uds_init();
-    fw_update_start ("src/test.dat");
+    fw_update_start ("test.dat");
     while (!is_fw_update_done ())
     {
         uds_poll ();
